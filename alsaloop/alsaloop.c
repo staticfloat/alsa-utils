@@ -29,6 +29,7 @@
 #include <alsa/asoundlib.h>
 #include <sys/time.h>
 #include <math.h>
+#include <limits.h>
 #include <pthread.h>
 #include <syslog.h>
 #include <signal.h>
@@ -370,6 +371,8 @@ static int parse_config(int argc, char *argv[], snd_output_t *output,
 		{"verbose", 0, NULL, 'v'},
 		{"resample", 0, NULL, 'n'},
 		{"samplerate", 1, NULL, 'A'},
+        {"silence-threshold", 1, NULL, 'q'},
+        {"silence-holdoff", 1, NULL, 'Q'},
 		{"sync", 1, NULL, 'S'},
 		{"slave", 1, NULL, 'a'},
 		{"thread", 1, NULL, 'T'},
@@ -400,6 +403,8 @@ static int parse_config(int argc, char *argv[], snd_output_t *output,
 #ifdef USE_SAMPLERATE
 	int arg_samplerate = SRC_SINC_FASTEST + 1;
 #endif
+    int arg_silence_threshold = INT_MIN;
+    int arg_silence_holdoff = 1000;
 	int arg_sync = SYNC_TYPE_AUTO;
 	int arg_slave = SLAVE_TYPE_AUTO;
 	int arg_thread = 0;
@@ -472,6 +477,14 @@ static int parse_config(int argc, char *argv[], snd_output_t *output,
 			err = atoi(optarg);
 			arg_period_size = err >= 32 && err < 200000 ? err : 0;
 			break;
+        case 'q':
+            err = atoi(optarg);
+            arg_silence_threshold = err < 0 ? err : INT_MIN;
+            break;
+        case 'Q':
+            err = atoi(optarg);
+            arg_silence_holdoff = err >= 0 ? err : 0;
+            break;
 		case 's':
 			err = atoi(optarg);
 			arg_loop_time = err >= 1 && err <= 100000 ? err : 30;
@@ -607,6 +620,9 @@ static int parse_config(int argc, char *argv[], snd_output_t *output,
 		play->nblock = capt->nblock = arg_nblock ? 1 : 0;
 		loop->latency_req = arg_latency_req;
 		loop->latency_reqtime = arg_latency_reqtime;
+        loop->silence_threshold = arg_silence_threshold;
+        loop->silence_holdoff = arg_silence_holdoff;
+        loop->silence_frames = 0;
 		loop->sync = arg_sync;
 		loop->slave = arg_slave;
 		loop->thread = arg_thread;

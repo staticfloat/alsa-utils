@@ -488,6 +488,40 @@ static inline snd_pcm_uframes_t buf_avail(struct loopback_handle *lhandle)
 	return lhandle->buf_size - lhandle->buf_count;
 }
 
+double get_sample_int(void * addr) {
+    return ((double)((int *)addr)[0])/2147483648.0;
+}
+double get_sample_short(void * addr) {
+    return ((double)((short *)addr)[0])/32768.0;
+}
+
+
+static double buf_rms(struct loopback * loop) {
+    struct loopback_handle *play = loop->play;
+    void * x = play->buf + play->buf_pos * play->frame_size;
+    int count = play->buf_count;
+    if (play->buf_pos + count > play->buf_size) {
+        count = play->buf_size - play->buf_pos;
+    }
+    double rms = 0.0;
+    if (play->format == SND_PCM_FORMAT_S32) {
+        for (snd_pcm_uframes_t idx=0; idx<count*play->channels; ++idx) {
+            double x_idx = get_sample_int(x + idx);
+            rms += x_idx*x_idx;
+        }
+    } else {
+        for (snd_pcm_uframes_t idx=0; idx<count*play->channels; ++idx) {
+            double x_idx = get_sample_short(x + idx);
+            rms += x_idx*x_idx;
+        }
+    }
+    double rms_db = 20*log(sqrt(rms/(count*play->channels)));
+	if (verbose > 4) {
+        snd_output_printf(loop->output, "silence: RMS %.2f of %d samples\n", rms_db, loop->play->buf_count);
+    }
+    return rms_db;
+}
+
 static void buf_remove(struct loopback *loop, snd_pcm_uframes_t count)
 {
 	/* remove samples from the capture buffer */
@@ -499,6 +533,38 @@ static void buf_remove(struct loopback *loop, snd_pcm_uframes_t count)
 		else
 			loop->capt->buf_count = 0;
 	}
+}
+
+static void rms_squelch(struct loopback *loop) {
+    /* Early-exit if we don't have any samples to analyze. */
+    if (loop->play->buf_count == 0 || loop->play->buf_pos > loop->play->buf_size) {
+        return;
+    }
+    double rms = buf_rms(loop);
+    if (rms > loop->silence_threshold) {
+        if (loop->silence_frames > loop->silence_holdoff) {
+	        if (verbose > 3) {
+                snd_output_printf(loop->output, "silence: GO (%d frames of silence before this)\n", loop->silence_frames);
+            }
+            loop->reinit = 1;
+        }
+        /* If the next buffer to be played is not silence, clear `silence_frames` and return. */
+        loop->silence_frames = 0;
+        return;
+    }
+
+    /* If the next buffer to be played is silence, increment `silence_frames` */
+    loop->silence_frames += loop->play->buf_count;
+
+    /* If we've been silent for long enough, squelch the output! */
+    if (loop->silence_frames > loop->silence_holdoff) {
+        int state = snd_pcm_state(loop->play->handle);
+	    if (verbose > 3 && state == SND_PCM_STATE_RUNNING) {
+            snd_output_printf(loop->output, "silence: SQUELCH [%d > %d]\n", loop->silence_frames, loop->silence_holdoff);
+        }
+        /* buf_remove(loop->play, loop->play->buf_count); */
+        snd_pcm_drop(loop->play->handle);
+    }
 }
 
 #if 0
@@ -876,6 +942,8 @@ static int xrun_sync(struct loopback *loop)
 			if (err < 0)
 				return err;
 			goto __again;
+        } else if (err == -EBADFD ) {
+            /* Do nothing; we don't have any delay because we're paused. */
 		} else {
 			logit(LOG_CRIT, "%s playback delay failed: %s\n", play->id, snd_strerror(err));
 			return err;
@@ -978,6 +1046,7 @@ static int xrun_sync(struct loopback *loop)
 
 			return err;
 		}
+        rms_squelch(loop);
 		delay1 = writeit(play);
 		if (verbose > 6)
 			snd_output_printf(loop->output,
@@ -1008,6 +1077,7 @@ static int xrun_sync(struct loopback *loop)
 			play->buf_count += delay1;
 			diff -= delay1;
 		}
+        rms_squelch(loop);
 		writeit(play);
 	}
 	if (verbose > 5) {
@@ -1607,6 +1677,7 @@ __again:
 	loop->play->buf_count = count;
 	if (loop->play->buf == loop->capt->buf)
 		loop->capt->buf_pos = count;
+    rms_squelch(loop);
 	err = writeit(loop->play);
 	if (verbose > 4)
 		snd_output_printf(loop->output, "%s: silence queued %i samples\n", loop->id, err);
@@ -1896,6 +1967,7 @@ int pcmjob_pollfds_handle(struct loopback *loop, struct pollfd *fds)
 			break;
 		/* we read new samples, if we have a room in the playback
 		   buffer, feed them there */
+        rms_squelch(loop);
 		pcount = writeit(play);
 		buf_remove(loop, pcount);
 		if (pcount > 0)

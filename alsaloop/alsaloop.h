@@ -150,6 +150,10 @@ struct loopback {
 	slave_type_t slave;
 	int thread;			/* thread number */
 	unsigned int wake;
+    /* silencing */
+    double silence_threshold;
+    int silence_holdoff;
+    int silence_frames;
 	/* statistics */
 	double pitch;
 	double pitch_delta;
