@@ -153,7 +153,7 @@ struct loopback {
     /* silencing */
     double silence_threshold;
     int silence_holdoff;
-    int silence_frames;
+    uint64_t silence_frames;
 	/* statistics */
 	double pitch;
 	double pitch_delta;
