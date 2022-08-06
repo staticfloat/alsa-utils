@@ -1,0 +1,14 @@
+[Unit]
+Description=Alsaloop
+After=sound.target
+
+[Service]
+ExecStartPre=/bin/bash -c "cp /home/pi/alsaequal.bin.saved /tmp/alsaequal.bin"
+ExecStart=/home/pi/src/alsa-utils/alsaloop/alsaloop -C hw:1,0 -P default --silence-threshold -70 --silence-holdoff 480000 -vvvv
+User=pi
+Group=pi
+Restart=on-failure
+RestartSec=0s
+
+[Install]
+WantedBy=multi-user.target
